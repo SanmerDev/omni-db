@@ -1,6 +1,7 @@
 use std::{env, fs};
 
 use clap::Parser;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPool;
 use sqlx::FromRow;
@@ -31,9 +32,9 @@ enum Commands {
         /// Name of table
         #[arg(short, long)]
         table: String,
-        /// Path of file
+        /// Path (or url) of file
         #[arg(short, long)]
-        file: String,
+        path: String,
     },
 }
 
@@ -86,24 +87,21 @@ struct Data {
     mag_mach_num: f32,
 }
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenvy::dotenv().ok();
-    let pool = PgPool::connect(&env::var("DATABASE_URL")?).await?;
-
-    let cli = Args::parse();
-    match cli.command {
-        Commands::Create { table } => create_not_exists(&pool, &table).await?,
-        Commands::Query { sql } => query(&pool, &sql).await?,
-        Commands::Add { table, file } => add(&pool, &table, &file).await?,
-    };
-
-    Ok(())
+struct App {
+    pool: PgPool,
 }
 
-async fn create_not_exists(pool: &PgPool, table_name: &String) -> anyhow::Result<()> {
-    let sql = format!(
-        r#"
+impl App {
+    async fn new(url: &str) -> Result<Self, sqlx::Error> {
+        let pool = PgPool::connect(&url).await?;
+        let app = App { pool };
+
+        Ok(app)
+    }
+
+    async fn create(&self, table: &str) -> Result<(), sqlx::Error> {
+        let sql = format!(
+            r#"
 CREATE TABLE IF NOT EXISTS {} (
     day INT,
     hour INT,
@@ -153,43 +151,65 @@ CREATE TABLE IF NOT EXISTS {} (
     PRIMARY KEY (day, hour, minute)
 )
         "#,
-        table_name
-    );
-
-    let _rec = sqlx::query(sql.as_str()).execute(pool).await?;
-
-    Ok(())
-}
-
-async fn query(pool: &PgPool, sql: &String) -> anyhow::Result<()> {
-    let recs: Vec<Data> = sqlx::query_as(sql.as_str()).fetch_all(pool).await?;
-    let json = serde_json::to_string_pretty(&recs)?;
-
-    if !recs.is_empty() {
-        println!("{json}");
-    }
-
-    Ok(())
-}
-
-async fn add(pool: &PgPool, table_name: &String, file_path: &String) -> anyhow::Result<()> {
-    create_not_exists(pool, table_name).await?;
-
-    let texts = fs::read_to_string(file_path)?;
-    for line in texts.lines() {
-        let mut values: Vec<&str> = line.split_whitespace().collect();
-
-        let _year = values.remove(0);
-        let fields_str = values.join(", ");
-
-        let sql = format!(
-            "INSERT INTO {} VALUES ({}) ON CONFLICT (day, hour, minute) DO NOTHING",
-            table_name, fields_str
+            table
         );
 
-        let _rec = sqlx::query(sql.as_str()).execute(pool).await?;
-        println!("Added: [{}, {}, {}]", values[0], values[1], values[2]);
+        sqlx::query(sql.as_str()).execute(&self.pool).await?;
+
+        Ok(())
     }
+
+    async fn query(&self, sql: &str) -> anyhow::Result<()> {
+        let recs: Vec<Data> = sqlx::query_as(sql).fetch_all(&self.pool).await?;
+        let json = serde_json::to_string_pretty(&recs)?;
+
+        if !recs.is_empty() {
+            println!("{json}");
+        }
+
+        Ok(())
+    }
+
+    async fn add(&self, table: &str, path: &str) -> anyhow::Result<()> {
+        let is_url = Url::parse(path).is_ok();
+        let content = if is_url {
+            reqwest::get(path).await?.text().await?
+        } else {
+            fs::read_to_string(path)?
+        };
+
+        self.create(table).await?;
+        for line in content.lines() {
+            let mut values: Vec<&str> = line.split_whitespace().collect();
+
+            let _year = values.remove(0);
+            let fields = values.join(", ");
+
+            let sql = format!(
+                "INSERT INTO {} VALUES ({}) ON CONFLICT (day, hour, minute) DO NOTHING",
+                table, fields
+            );
+
+            let _rec = sqlx::query(sql.as_str()).execute(&self.pool).await?;
+            println!("Added: [{}, {}, {}]", values[0], values[1], values[2]);
+        }
+
+        Ok(())
+    }
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+    let url = env::var("DATABASE_URL").expect("Env var DATABASE_URL is required");
+    let app = App::new(&url).await?;
+
+    let cli = Args::parse();
+    match cli.command {
+        Commands::Create { table } => app.create(&table).await?,
+        Commands::Query { sql } => app.query(&sql).await?,
+        Commands::Add { table, path } => app.add(&table, &path).await?,
+    };
 
     Ok(())
 }
