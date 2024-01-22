@@ -154,7 +154,7 @@ CREATE TABLE IF NOT EXISTS {} (
             table
         );
 
-        sqlx::query(sql.as_str()).execute(&self.pool).await?;
+        sqlx::query(&sql).execute(&self.pool).await?;
 
         Ok(())
     }
@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS {} (
                 table, fields
             );
 
-            let _rec = sqlx::query(sql.as_str()).execute(&self.pool).await?;
+            sqlx::query(&sql).execute(&self.pool).await?;
             println!("Added: [{}, {}, {}]", values[0], values[1], values[2]);
         }
 
