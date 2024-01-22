@@ -1,0 +1,58 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:latest
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: db
+          POSTGRES_HOST_AUTH_METHOD: 'md5'
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build
+        run: |
+          cargo build --package omni-db --bin omni-db --release
+          cp target/release/omni-db omni-db
+          
+      - name: Get raw data
+        run: |
+          curl https://spdf.gsfc.nasa.gov/pub/data/omni/high_res_omni/omni_min2023.asc > 2023_raw.txt
+          head -n 100 2023_raw.txt > 2023.txt
+          
+      - name: Add
+        env:
+          DATABASE_URL: postgres://user:password@localhost/db
+        run: |
+          ./omni-db add --table 'y2023' --file '2023.txt'
+          
+      - name: Query
+        env:
+          DATABASE_URL: postgres://user:password@localhost/db
+        run: |
+          ./omni-db query 'select * from y2023 limit 3'
