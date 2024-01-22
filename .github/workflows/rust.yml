@@ -49,7 +49,7 @@ jobs:
         env:
           DATABASE_URL: postgres://user:password@localhost/db
         run: |
-          ./omni-db add --table 'y2023' --file '2023.txt'
+          ./omni-db add --table 'y2023' --path '2023.txt'
           
       - name: Query
         env:
