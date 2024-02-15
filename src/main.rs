@@ -199,10 +199,10 @@ impl App {
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
-    let url = env::var("DATABASE_URL").expect("Env var DATABASE_URL is required");
-    let app = App::new(&url).await?;
 
     let cli = Args::parse();
+    let url = env::var("DATABASE_URL").expect("Env var DATABASE_URL is required");
+    let app = App::new(&url).await?;
     match cli.command {
         Commands::Create { table } => app.create(&table).await?,
         Commands::Query { sql } => app.query(&sql).await?,
